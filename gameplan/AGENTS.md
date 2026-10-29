@@ -1,0 +1,87 @@
+# Gameplan
+
+Async-first discussions tool for remote teams. Frappe (Python) backend + Vue 3 /
+TypeScript SPA served at `/g`.
+
+Backend in `gameplan/`, frontend in `frontend/src/` (`components/`, `pages/`,
+`data/` for fetching composables, `utils/`).
+
+**The code is the source of truth for conventions.** It is consistent — find the
+nearest precedent and copy it. This file covers only what the code cannot tell you.
+Where a trap or policy below contradicts the precedent you found, this file wins.
+
+## Naming: product vs schema
+
+New code, UI copy and commit messages say **Space** and **Community**. The schema
+still carries the old names. Do not rename the doctypes.
+
+- `GP Project` = Space
+- `GP Team` = Community
+
+## Where the non-obvious things live
+
+- Boot data: `gameplan/www/g.py`. Whitelisted endpoints: `gameplan/api.py`, plus
+  document methods on the doctype classes.
+- Permissions: `gameplan/permissions.py` and the `has_permission` hooks in `hooks.py`.
+- Full-text search: `gameplan/search_sqlite.py` (SQLite FTS5 in its own per-site
+  file), registered once in `hooks.py`. Async index queue drained by cron.
+- Patches sit next to their doctype in `gameplan/gameplan/doctype/<dt>/patches/`,
+  registered in `gameplan/patches.txt`. App-level `gameplan/patches/` is for
+  cross-doctype work only.
+
+## Traps
+
+- **The vendored `./frappe-ui/` is not the version that runs.** The submodule is on
+  beta.28, far behind the release `frontend/package.json` pins. `yarn dev:frappe-ui` symlinks the
+  stale checkout. Read `frontend/node_modules/frappe-ui/` for current library
+  source; use `./frappe-ui/` only when doing library work.
+- **Cypress wipes the entire site**, not the records a spec created — `resetData`
+  calls `gameplan.ui_test_helpers.reset`. Point it at a disposable site, nothing else.
+- **Colour shades**: in Gameplan code use gray tokens. Amber survives in
+  `ReactionsDesktop.vue`, `ReactionsMobile.vue` and the `DiscussionRow.vue` unread
+  badge — the exception, not a licence to add more. frappe-ui's own components do
+  ship colour (the Rail unread badge is `theme="red"`); that is the library's call
+  and not a precedent for new Gameplan markup. Unread is drawn amber, red and gray
+  in three different places, so match the rule here, not the nearest neighbour.
+- **On a SQLite site, backend tests fail intermittently while a dev server is
+  running** — both hold the same DB file. Symptom is dozens of
+  `QueryDeadlockError: database is locked`, never an assertion failure. Stop the
+  server or re-run; do not debug it as a real failure.
+
+## Policy
+
+- Fix a `frappe` or `frappe-ui` bug upstream, not with a Gameplan workaround. A local
+  workaround needs a comment naming the upstream PR that removes it.
+- Verify UI work in a browser before calling it done. Screenshots belong in the PR as
+  GitHub attachments, never in the repo.
+- Keep the agent guide in `gameplan/mcp.py` current. Frappe's MCP server sends it to
+  every assistant, and most members' assistants cannot look methods up (method discovery
+  is for System Users only). When a change renames, removes or changes the arguments of
+  something the guide names, or adds an action assistants should use, update the guide in
+  the same change. Give each new whitelisted method a one-line docstring.
+- Do not change `__version__` in `gameplan/__init__.py`. Every merge to `develop` is
+  released by `.github/workflows/release.yml`, which commits the next version itself.
+  Only the maintainer sets a version by hand, such as 1.0.0.
+
+## Environment
+
+Site names and ports vary per bench. Resolve them, do not assume.
+
+- Sites: `ls sites/`. Use a site whose data is expendable, and confirm that with the
+  human if you do not already know. `"allow_tests": true` permits tests; it does not
+  promise the data is disposable, and several sites can carry it. See the Cypress
+  trap above for the blast radius.
+- Vite dev port is `8080 + (webserver_port - 8000)`, read from
+  `sites/common_site_config.json`.
+- Backend tests: `bench --site <site> run-tests --app gameplan` (also `--module`,
+  `--test`).
+- E2E: `cd frontend && yarn test`. Needs a dev server (`bench start`, or
+  `DEV_SERVER=1 bench serve`) plus `allow_tests`, `enable_ui_tests: 1` and
+  `developer_mode: 1` in `site_config.json`. `enable_ui_tests` is read through
+  `cint`, so `"true"` counts as off.
+- Lint: `pre-commit run --all-files` (ruff: tabs, double quotes, line 110).
+- Debug: add `def execute():` to `gameplan/debug.py`, run
+  `bench --site <site> execute gameplan.debug.execute`.
+- Sign in as another user: `bench browse --site <site> --user <u> --sid` (needs
+  `developer_mode`). In the app, dev builds add "Switch user" to the account menu
+  and the mobile You page (`DevUserList.vue`); needs `enable_dev_user_switcher: 1`.

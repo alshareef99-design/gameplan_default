@@ -1,0 +1,249 @@
+name: UI Test
+
+on:
+  pull_request:
+  push:
+    branches: [main, develop]
+
+# GitHub downgrades this token to read-only for fork-originated runs regardless of
+# what is declared here, so write access only applies to trusted same-repo PRs (which
+# comment inline below). Fork PRs are reported by ui-test-report.yml via workflow_run.
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    if: ${{ github.repository_owner == 'frappe' }}
+    timeout-minutes: 60
+
+    # Stays contents: read. This job checks out and executes pull-request code —
+    # install.sh, the frontend build, the specs themselves — so a repo-write token
+    # here would be a write credential handed to code under review. Badge
+    # publishing needs that token, so it lives in the push-only `badge` job below
+    # and this one just hands the rendered SVG over as an artifact.
+    permissions:
+      contents: read
+      pull-requests: write
+
+    outputs:
+      badge: ${{ steps.report.outputs.built }}
+
+    strategy:
+      fail-fast: false
+
+    name: UI Tests (Cypress)
+
+    services:
+      mariadb:
+        image: mariadb:10.6
+        env:
+          MARIADB_ROOT_PASSWORD: 123
+        ports:
+          - 3306:3306
+        options: --health-cmd="mysqladmin ping" --health-interval=5s --health-timeout=2s --health-retries=3
+
+    steps:
+      - name: Clone
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.14"
+
+      - name: Check for valid Python & Merge Conflicts
+        run: |
+          python -m compileall -q -f "${GITHUB_WORKSPACE}"
+          if grep -lr --exclude-dir=node_modules "^<<<<<<< " "${GITHUB_WORKSPACE}"
+              then echo "Found merge conflicts"
+              exit 1
+          fi
+
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 24
+          check-latest: true
+
+      - name: Add to Hosts
+        run: |
+          echo "127.0.0.1 gameplan.test" | sudo tee -a /etc/hosts
+
+      - name: Cache pip
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/*requirements.txt', '**/pyproject.toml', '**/setup.py') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+            ${{ runner.os }}-
+
+      - name: Cache cypress binary
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/Cypress
+          key: ${{ runner.os }}-cypress
+
+      # GAMEPLAN_COVERAGE instruments the frontend bundle this step builds, which is
+      # what Cypress then drives. It is scoped to this workflow on purpose: it roughly
+      # doubles bundle size and slows every expression, so no production build sets it.
+      - name: Install Dependencies
+        run: |
+          bash ${GITHUB_WORKSPACE}/.github/helper/install_dependencies.sh
+          bash ${GITHUB_WORKSPACE}/.github/helper/install.sh
+        env:
+          BEFORE: ${{ env.GITHUB_EVENT_PATH.before }}
+          AFTER: ${{ env.GITHUB_EVENT_PATH.after }}
+          GAMEPLAN_COVERAGE: "1"
+
+      - name: Site Setup
+        run: |
+          cd ~/frappe-bench/
+          bench --site gameplan.test execute frappe.utils.install.complete_setup_wizard
+
+
+      - name: UI Tests
+        uses: cypress-io/github-action@v6
+        with:
+          working-directory: frontend
+        env:
+          CYPRESS_BASE_URL: http://gameplan.test:8000
+          # No SKIP_REALTIME_E2E: `bench start` runs the Procfile's socketio process, so the
+          # realtime service is listening on 9000 and the spec's preflight can reach it. The
+          # skip predated that being checked and made the suite's realtime coverage dead.
+
+      # Merges the zeroed instrument-time baseline under the runtime data before
+      # reporting. Without it the 33 lazy routes no spec visits would be absent from
+      # the report rather than counted as 0%, which flatters the number by shrinking
+      # the denominator. See frontend/vite.config.ts.
+      #
+      # The baseline has to be carried across trees first: `bench get-app` clones the
+      # workspace into the bench, so the instrumented build wrote it under
+      # apps/gameplan/frontend while Cypress wrote .nyc_output here.
+      #
+      # COVERAGE_ROOT is what makes that split survive the merge. The instrumented
+      # bundle records absolute paths in the bench tree, and nyc discards every entry
+      # that falls outside its own cwd — so merging from this tree silently yields
+      # 0/0 rather than failing. It must point at the tree the coverage paths name.
+      #
+      # Results and coverage form one section of a single PR comment shared with the
+      # backend job — see .github/scripts/pr_comment.py.
+      - name: Build frontend report
+        id: report
+        if: ${{ always() }}
+        run: |
+          python .github/scripts/junit_to_markdown.py frontend/cypress/results \
+            --label Cypress --kind spec \
+            --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            > "${RUNNER_TEMP}/frontend-section.md"
+
+          mkdir -p frontend/coverage
+          if cp ~/frappe-bench/apps/gameplan/frontend/coverage/baseline.json frontend/coverage/baseline.json \
+            && (cd frontend && COVERAGE_ROOT="${HOME}/frappe-bench/apps/gameplan/frontend" yarn coverage:merge) \
+            && python .github/scripts/coverage_report.py frontend/coverage/cobertura-coverage.xml \
+              --profile frontend --compact \
+              --markdown "${RUNNER_TEMP}/frontend-coverage.md" \
+              --badge "${RUNNER_TEMP}/frontend-coverage.svg"; then
+            echo "built=true" >> "$GITHUB_OUTPUT"
+            printf '\n' >> "${RUNNER_TEMP}/frontend-section.md"
+            cat "${RUNNER_TEMP}/frontend-coverage.md" >> "${RUNNER_TEMP}/frontend-section.md"
+          else
+            echo "built=false" >> "$GITHUB_OUTPUT"
+            printf '\nFrontend coverage was unavailable for this run.\n' >> "${RUNNER_TEMP}/frontend-section.md"
+          fi
+          cat "${RUNNER_TEMP}/frontend-section.md" >> "$GITHUB_STEP_SUMMARY"
+
+      # Same-repo PRs have a read-write token, so write directly here for instant
+      # feedback. Fork PRs (read-only token) are handled by ui-test-report.yml from
+      # the artifacts below — hence the same-repo-only guard.
+      - name: Comment on PR (same-repo)
+        if: ${{ always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python .github/scripts/pr_comment.py \
+            --repo "${GITHUB_REPOSITORY}" \
+            --pr "${{ github.event.pull_request.number }}" \
+            --section frontend \
+            --body-file "${RUNNER_TEMP}/frontend-section.md" \
+            --footer "<sub>Updated for commit ${{ github.event.pull_request.head.sha }}.</sub>"
+
+      - name: Upload coverage badge
+        uses: actions/upload-artifact@v4
+        if: ${{ steps.report.outputs.built == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/develop' }}
+        with:
+          name: frontend-badge
+          path: ${{ runner.temp }}/frontend-coverage.svg
+          retention-days: 1
+
+      # Staged into one directory so the artifact's internal layout does not depend on
+      # where upload-artifact decides the common ancestor of its inputs is. JUnit lives
+      # in its own subdirectory: the reporter hands that whole directory to the JUnit
+      # parser, and the Cobertura file must not be in it.
+      - name: Stage frontend results
+        if: ${{ always() }}
+        run: |
+          mkdir -p "${RUNNER_TEMP}/frontend-results/junit"
+          cp frontend/cypress/results/*.xml "${RUNNER_TEMP}/frontend-results/junit/" || true
+          cp frontend/coverage/cobertura-coverage.xml "${RUNNER_TEMP}/frontend-results/" || true
+
+      # Consumed by the workflow_run reporter (fork PRs), which re-renders both in the
+      # trusted context. The event payload is deliberately NOT uploaded: that job
+      # resolves the PR from the event's own head_sha, never from fork-controlled input.
+      - name: Upload frontend results
+        uses: actions/upload-artifact@v4
+        if: ${{ always() }}
+        with:
+          name: frontend-results
+          path: ${{ runner.temp }}/frontend-results
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload failure screenshots & videos
+        uses: actions/upload-artifact@v4
+        if: ${{ failure() }}
+        with:
+          name: cypress-failure-artifacts
+          path: |
+            frontend/cypress/screenshots
+            frontend/cypress/videos
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Stop server
+        run: |
+          ps -ef | grep "[f]rappe serve" | awk '{print $2}' | xargs kill -s SIGINT
+          sleep 5
+
+      - name: Show bench output
+        if: ${{ always() }}
+        run: cat ~/frappe-bench/bench_start.log || true
+
+  # Separated from the test job on purpose. Publishing needs contents: write, and
+  # the test job executes pull-request code — granting it there would hand a
+  # repo-write credential to code under review. This job runs only on a push to
+  # develop, where the code is already merged, and touches nothing but the badge.
+  #
+  # Not continue-on-error: the first version was, and it reported success while a
+  # 403 published nothing, leaving the README badge 404ing with no signal. Here
+  # the suite has already passed, so a red run blocks nobody.
+  badge:
+    name: Publish frontend coverage badge
+    runs-on: ubuntu-latest
+    needs: test
+    if: ${{ needs.test.outputs.badge == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/develop' }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: frontend-badge
+          path: badge
+
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/scripts/publish_badge.sh badge/frontend-coverage.svg badges-frontend

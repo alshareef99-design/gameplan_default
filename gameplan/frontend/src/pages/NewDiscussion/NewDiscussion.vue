@@ -1,0 +1,110 @@
+<template>
+  <div v-if="!hasSpaceToPostIn" class="body-container py-8">
+    <NoSpaceToPostIn class="mx-auto max-w-2xl px-6" />
+  </div>
+
+  <DiscussionEditor
+    v-else
+    editor-class="max-w-[unset] min-h-[calc(100vh-200px)] pb-40 prose-v3 overflow-auto px-2 -mx-2"
+    :content="draftData?.content"
+    @change="onEditorChange"
+    :editable="isComposerEditable"
+    placeholder="Type '/' for commands or select text to format"
+  >
+    <template #editor="{ editor, editorClass }">
+      <DiscussionHeader />
+      <PageHeaderBase
+        class="hidden h-10 items-center border-b bg-surface-base px-3 sm:flex sm:px-5"
+      >
+        <ScrollArea
+          orientation="horizontal"
+          class="w-full transition-opacity"
+          :class="{ 'opacity-50': isDraftLoading }"
+          :inert="isDraftLoading"
+          :aria-disabled="isDraftLoading"
+        >
+          <EditorFixedMenu :editor="editor" :items="gameplanToolbar" />
+        </ScrollArea>
+      </PageHeaderBase>
+
+      <div class="discussion-container isolate pt-4">
+        <DiscussionSpaceSelector size="md" class="mb-2 w-full sm:hidden" />
+        <Badge
+          v-if="scheduledAt"
+          class="mb-2 sm:hidden"
+          :title="`Scheduled for ${scheduledAtLabel}`"
+        >
+          <template #prefix>
+            <span class="lucide-calendar-clock size-3.5" aria-hidden="true" />
+          </template>
+          {{ scheduledAtLabel }}
+        </Badge>
+        <DiscussionBody :editor="editor" :editor-class="editorClass" />
+      </div>
+
+      <div
+        v-if="author?.name === sessionUser.name"
+        :inert="isDraftLoading"
+        :aria-disabled="isDraftLoading"
+        class="fixed inset-x-0 bottom-0 z-20 border-t bg-surface-base px-2 pt-1 pb-2 shadow-[0_-1px_3px_rgba(15,23,42,0.06)] sm:hidden standalone:pb-[max(1.5rem,env(safe-area-inset-bottom))]"
+        :class="{ 'opacity-50': isDraftLoading }"
+      >
+        <ScrollArea
+          orientation="horizontal"
+          class="before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:z-10 before:w-5 before:bg-gradient-to-r before:from-surface-base before:to-transparent after:pointer-events-none after:absolute after:inset-y-0 after:right-0 after:z-10 after:w-5 after:bg-gradient-to-l after:from-surface-base after:to-transparent"
+        >
+          <EditorFixedMenu
+            :editor="editor"
+            :items="mobileDiscussionToolbar"
+            class="mobile-editor-toolbar min-w-max justify-center"
+          />
+        </ScrollArea>
+      </div>
+    </template>
+  </DiscussionEditor>
+</template>
+
+<script setup lang="ts">
+import { Badge, PageHeaderBase, ScrollArea } from 'frappe-ui'
+import { EditorFixedMenu } from 'frappe-ui/editor'
+import { gameplanToolbar, mobileDiscussionToolbar } from '@/components/editor/toolbars'
+import DiscussionEditor from '@/components/editor/DiscussionEditor.vue'
+import NoSpaceToPostIn from '@/components/NoSpaceToPostIn.vue'
+import DiscussionHeader from './DiscussionHeader.vue'
+import DiscussionSpaceSelector from './DiscussionSpaceSelector.vue'
+import DiscussionBody from './DiscussionBody.vue'
+import { provideNewDiscussion } from './useNewDiscussion'
+
+const {
+  draftData,
+  sessionUser,
+  author,
+  isDraftLoading,
+  isComposerEditable,
+  hasSpaceToPostIn,
+  scheduledAt,
+  scheduledAtLabel,
+  initialize,
+} = provideNewDiscussion()
+
+// The editor emits on mount, before the draft has resolved. Dropping those changes is the
+// point: there is no buffer to write them into yet, and the composer is not editable.
+function onEditorChange(content: string) {
+  if (!draftData.value) return
+  draftData.value.content = content
+}
+
+initialize()
+</script>
+
+<style scoped>
+.mobile-editor-toolbar :deep(button) {
+  height: 2.25rem;
+  width: 2.25rem;
+}
+
+.mobile-editor-toolbar :deep(button .size-4) {
+  height: 1.125rem;
+  width: 1.125rem;
+}
+</style>

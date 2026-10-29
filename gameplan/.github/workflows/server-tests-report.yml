@@ -1,0 +1,103 @@
+name: Server Test Coverage Report
+
+# Runs after "Server Tests" completes. Triggered by workflow_run, it executes in the
+# base-repo (trusted) context with a read-write token, so it can post the coverage
+# comment even when the run came from a fork PR — where the test workflow's own token
+# is read-only and cannot comment.
+on:
+  workflow_run:
+    workflows: ["Server Tests"]
+    types:
+      - completed
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: write
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    # Fork PRs only — same-repo PRs comment inline from server-tests.yml, so skipping
+    # them here avoids a duplicate comment. (head_repository differs from the base
+    # repo only when the run originated from a fork.)
+    if: >-
+      github.event.workflow_run.conclusion != 'skipped'
+      && github.repository_owner == 'frappe'
+      && github.event.workflow_run.event == 'pull_request'
+      && github.event.workflow_run.head_repository.full_name != github.repository
+    steps:
+      # Checks out the default branch (trusted), not the fork PR code — we only need
+      # the report script here, never the untrusted branch under test.
+      - name: Checkout report script
+        uses: actions/checkout@v4
+
+      - name: Download artifacts from test run
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+          path: artifacts
+
+      # Resolved from the workflow_run event's own head_sha and head_repository, both
+      # trusted, via the API. Reading the number out of an uploaded event.json instead
+      # would let a fork name any PR in the repo and have this write-authorized token
+      # comment on it.
+      #
+      # A commit can belong to more than one open PR, so matching is narrowed to PRs
+      # whose head is exactly this SHA on exactly this fork, and it must resolve to
+      # exactly one. Anything ambiguous comments nowhere rather than guessing — the
+      # report is worth less than a comment landing on an unrelated PR.
+      - name: Resolve PR number
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          matches="$(gh api "repos/${REPO}/commits/${HEAD_SHA}/pulls" --paginate \
+            --jq "[.[]
+              | select(.state == \"open\")
+              | select(.head.sha == \"${HEAD_SHA}\")
+              | select(.head.repo.full_name == \"${HEAD_REPO}\")
+              | .number]")"
+          count="$(jq -r 'length' <<<"$matches")"
+
+          if [ "$count" = "1" ]; then
+            echo "number=$(jq -r '.[0]' <<<"$matches")" >> "$GITHUB_OUTPUT"
+          else
+            echo "Expected exactly one open PR at ${HEAD_SHA} on ${HEAD_REPO}, found ${count}; not commenting."
+            echo "number=" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Both XML inputs are fork-controlled, so the coverage script caps their size
+      # and refuses entity declarations before parsing.
+      - name: Build backend report
+        if: ${{ steps.pr.outputs.number != '' }}
+        run: |
+          python .github/scripts/junit_to_markdown.py artifacts/backend-results/backend-junit.xml \
+            --label Backend --kind module \
+            --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${{ github.event.workflow_run.id }}" \
+            > "${RUNNER_TEMP}/backend-section.md"
+
+          if python .github/scripts/coverage_report.py artifacts/backend-results/coverage.xml \
+              --profile backend --compact --markdown "${RUNNER_TEMP}/coverage-part.md"; then
+            printf '\n' >> "${RUNNER_TEMP}/backend-section.md"
+            cat "${RUNNER_TEMP}/coverage-part.md" >> "${RUNNER_TEMP}/backend-section.md"
+          else
+            printf '\nBackend coverage was unavailable for this run.\n' >> "${RUNNER_TEMP}/backend-section.md"
+          fi
+
+      - name: Comment on PR (fork)
+        if: ${{ steps.pr.outputs.number != '' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python .github/scripts/pr_comment.py \
+            --repo "${GITHUB_REPOSITORY}" \
+            --pr "${{ steps.pr.outputs.number }}" \
+            --section backend \
+            --body-file "${RUNNER_TEMP}/backend-section.md" \
+            --footer "<sub>Updated for commit ${{ github.event.workflow_run.head_sha }}.</sub>"

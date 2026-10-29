@@ -1,0 +1,229 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2022-06-06 16:37:44.053094",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "user",
+  "enabled",
+  "full_name",
+  "community_order",
+  "pinned_spaces",
+  "quick_reaction_emojis",
+  "sidebar_badge_style",
+  "email_digest_frequency",
+  "email_digest_day_of_week",
+  "email_digest_last_sent_on",
+  "bio",
+  "readme",
+  "bento_section",
+  "bento_cards",
+  "layout_customized",
+  "cover_image_section",
+  "cover_image",
+  "cover_image_position",
+  "profile_image_section",
+  "image",
+  "is_image_background_removed",
+  "original_image",
+  "image_background_color"
+ ],
+ "fields": [
+  {
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "User",
+   "options": "User",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "readme",
+   "fieldtype": "Text Editor",
+   "label": "Readme"
+  },
+  {
+   "fieldname": "bento_section",
+   "fieldtype": "Section Break",
+   "label": "Bento"
+  },
+  {
+   "fieldname": "bento_cards",
+   "fieldtype": "Table",
+   "label": "Bento Cards",
+   "options": "GP Profile Bento Card"
+  },
+  {
+   "default": "0",
+   "fieldname": "layout_customized",
+   "fieldtype": "Check",
+   "label": "Layout Customized"
+  },
+  {
+   "fetch_from": "user.full_name",
+   "fieldname": "full_name",
+   "fieldtype": "Data",
+   "label": "Full Name",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cover_image",
+   "fieldtype": "Attach Image",
+   "label": "Cover Image"
+  },
+  {
+   "fieldname": "cover_image_position",
+   "fieldtype": "Float",
+   "label": "Cover Image Position"
+  },
+  {
+   "fieldname": "bio",
+   "fieldtype": "Data",
+   "label": "Bio",
+   "length": 280
+  },
+  {
+   "fieldname": "profile_image_section",
+   "fieldtype": "Section Break",
+   "label": "Profile Image"
+  },
+  {
+   "fieldname": "cover_image_section",
+   "fieldtype": "Section Break",
+   "label": "Cover Image"
+  },
+  {
+   "fieldname": "image",
+   "fieldtype": "Attach Image",
+   "label": "Image"
+  },
+  {
+   "default": "0",
+   "fieldname": "is_image_background_removed",
+   "fieldtype": "Check",
+   "label": "Is Image Background Removed"
+  },
+  {
+   "fieldname": "original_image",
+   "fieldtype": "Attach Image",
+   "label": "Original Image"
+  },
+  {
+   "fieldname": "image_background_color",
+   "fieldtype": "Color",
+   "label": "Image Background Color"
+  },
+  {
+   "default": "0",
+   "fetch_from": "user.enabled",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enabled"
+  },
+  {
+   "fieldname": "community_order",
+   "fieldtype": "JSON",
+   "label": "Community Order"
+  },
+  {
+   "fieldname": "pinned_spaces",
+   "fieldtype": "JSON",
+   "label": "Pinned Spaces"
+  },
+  {
+   "fieldname": "quick_reaction_emojis",
+   "fieldtype": "JSON",
+   "label": "Quick Reaction Emojis"
+  },
+  {
+   "default": "Dot",
+   "fieldname": "sidebar_badge_style",
+   "fieldtype": "Select",
+   "label": "Sidebar Badge Style",
+   "options": "Unread count\nDot"
+  },
+  {
+   "default": "Off",
+   "fieldname": "email_digest_frequency",
+   "fieldtype": "Select",
+   "label": "Email Digest Frequency",
+   "options": "Off\nWeekly\nFortnightly\nMonthly"
+  },
+  {
+   "default": "Monday",
+   "fieldname": "email_digest_day_of_week",
+   "fieldtype": "Select",
+   "label": "Email Digest Day of Week",
+   "options": "Monday\nTuesday\nWednesday\nThursday\nFriday\nSaturday\nSunday"
+  },
+  {
+   "fieldname": "email_digest_last_sent_on",
+   "fieldtype": "Date",
+   "label": "Email Digest Last Sent On",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-09-10 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Gameplan",
+ "name": "GP User Profile",
+ "naming_rule": "By script",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Gameplan Admin",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Gameplan Member",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Gameplan Guest",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}
